@@ -7,12 +7,15 @@ import sys
 import posix_ipc
 import json
 import time
-
-from mic_hat_4 import pixels
-from mic_hat_4 import alexa_led_pattern
-from mic_hat_4 import google_home_led_pattern
+from MMMApi import MMMApi
+from Respeaker import Respeaker
 
 interrupted = False
+
+ALEXA = 0
+GOOGLE_ASSISTANT = 1
+MMMApiInstance = MMMApi()
+RespeakerInstance = Respeaker()
 
 def signal_handler(signal, frame):
 
@@ -29,23 +32,21 @@ def interrupt_callback():
 
 def alexa_callback():
 
-    pixels.pixels.pattern = alexa_led_pattern.AlexaLedPattern(show=pixels.pixels.show)
     print('alexa detected!')
-    communicateAssistant(led = pixels.pixels,messageQueue = alexa_mq)
+    communicateAssistant(ALEXA)
     print('alexa finished')
     
 def google_callback():
 
-
-    pixels.pixels.pattern = google_home_led_pattern.GoogleHomeLedPattern(show=pixels.pixels.show)
-
     print('google detected!')
-    communicateAssistant(led = pixels.pixels,messageQueue = google_mq)
+    communicateAssistant(GOOGLE_ASSISTANT)
     print('google finished')
-    
-def communicateAssistant(led,messageQueue):
 
-    led.wakeup()
+    
+def communicateAssistant(AssistantNo):
+
+    RespeakerInstance.wakeup(AssistantNo)
+    MMMApiInstance.wakeup(AssistantNo)
 
     # remove a messages of queue if have a message before Assistantcotrol sends wakeup to Assistant
     # (status synchronization)
@@ -56,26 +57,28 @@ def communicateAssistant(led,messageQueue):
             # print(msg)
 
     print('wakeup')
-    messageQueue.send('wakeup')
+    assistantMessageQueue[AssistantNo].send('wakeup')
     
-
     while True:
         try:
             # receive with timeout. 
             # If Assistant already finished. Assistant controller receives no message from Assistant and finishes after timeout.
             msg = assistantsControl_mq.receive(timeout=15)
             if msg[0] == b'finish':
+                MMMApiInstance.finish(AssistantNo)
                 break
             elif msg[0] == b'speak':
-                led.speak()
+                MMMApiInstance.speak(AssistantNo)
+                RespeakerInstance.speak(AssistantNo)
             elif msg[0] == b'think':
-                led.think()
+                MMMApiInstance.think(AssistantNo)
+                RespeakerInstance.think(AssistantNo)
         except posix_ipc.BusyError:
             break
     sleep(0.5)
-    led.off()
 
-
+    RespeakerInstance.off()
+    MMMApiInstance.off()
 
 if len(sys.argv) != 3:
     print("Error: need to specify 2 model names")
@@ -92,9 +95,9 @@ detector = snowboydecoder.HotwordDetector(models, sensitivity=sensitivity)
 callbacks = [alexa_callback, google_callback]
 print('Listening... Press Ctrl+C to exit')
 
-google_mq = posix_ipc.MessageQueue("/GoogleAssistantQueue", posix_ipc.O_CREAT)
-alexa_mq = posix_ipc.MessageQueue("/AlexaQueue", posix_ipc.O_CREAT)
+assistantMessageQueue = [ posix_ipc.MessageQueue("/AlexaQueue", posix_ipc.O_CREAT),posix_ipc.MessageQueue("/GoogleAssistantQueue", posix_ipc.O_CREAT)]
 assistantsControl_mq = posix_ipc.MessageQueue("/AssistantsControlQueue",posix_ipc.O_CREAT,read=True)
+
 
 # main loop
 detector.start(detected_callback=callbacks,
